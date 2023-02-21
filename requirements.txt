@@ -1,1 +1,7 @@
 jupyter
+pandas
+matplotlib
+seaborn
+sklearn
+torch
+torchtext
