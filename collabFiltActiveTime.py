@@ -65,12 +65,15 @@ def load_dataset(df):
         Matrix Factorization based recommendation.
     """
     df = df[~df['documentId'].isnull()]
+    # burde beholde duplicates? I alle fall legge sammen active time spent? 
+    df['Total'] = df.groupby(['userId', 'documentId'])['activeTime'].transform('sum')
+    
     df = df.drop_duplicates(subset=['userId', 'documentId']).reset_index(drop=True)
     df = df.sort_values(by=['userId', 'time'])
     n_users = df['userId'].nunique()
     n_items = df['documentId'].nunique()
     # Fill all NaN with 0 
-    df = df.fillna(0)
+    # df = df.fillna(0)
 
     ratings = np.zeros((n_users, n_items))
     new_user = df['userId'].values[1:] != df['userId'].values[:-1]
@@ -80,11 +83,15 @@ def load_dataset(df):
     new_df = pd.DataFrame({'documentId':item_ids, 'tid':range(1,len(item_ids)+1)})
     df = pd.merge(df, new_df, on='documentId', how='outer')
     
+    # Find mean for articles, instead of using mean off all articles. 
+    
+    
     # Adds a collumn with the normalized active time for each user.
-    df['activeTime_norm'] = df.groupby('userId')['activeTime'].apply(lambda x: (x - x.mean()) / x.std()) # normalize activeTime for each user
+    df['activeTime_norm'] = df.groupby('documentId')['Total'].apply(lambda x: (x - x.mean()) / x.std(), group_keys=True) # normalize activeTime for each user
     
     
     # add normalized activeTime as rating 
+    # 
     for row in df[["uid", "tid", "activeTime_norm"]].itertuples():
         ratings[row[1]-1, row[2]-1] = row[3] # use normalized activeTime as rating
         
@@ -93,6 +100,11 @@ def load_dataset(df):
     #debugging 
     assert not any(np.isnan(ratings[r, c]) for c in range(ratings.shape[1]) for r in range(ratings.shape[0]))
     return ratings
+
+# todo fjern
+def docMean(df, documentId):
+    mean = df.loc[df['documentId'] == documentId, 'activeTime'].mean()
+    return mean
     
     
 def train_test_split(ratings, fraction=0.2):
@@ -125,64 +137,6 @@ def evaluate(pred, actual, k):
     print("ARHR@{} is {:.4f}".format(k, arhr))
     
 
-def content_processing(df):
-    """
-        Remove events which are front page events, and calculate cosine similarities between
-        items. Here cosine similarity are only based on item category information, others such
-        as title and text can also be used.
-        Feature selection part is based on TF-IDF process.
-    """
-    df = df[df['documentId'].notnull()]
-    df = df.drop_duplicates(subset=['userId', 'documentId']).reset_index(drop=True)
-    df['category'] = df['category'].str.split('|')
-    df['category'] = df['category'].fillna("").astype('str')
-    
-    item_ids = df['documentId'].unique().tolist()
-    new_df = pd.DataFrame({'documentId':item_ids, 'tid':range(1,len(item_ids)+1)})
-    df = pd.merge(df, new_df, on='documentId', how='outer')
-    df_item = df[['tid', 'category']].drop_duplicates(inplace=False)
-    df_item.sort_values(by=['tid', 'category'], ascending=True, inplace=True)
-    
-    # select features/words using TF-IDF 
-    tf = TfidfVectorizer(analyzer='word',ngram_range=(1, 2),min_df=0)
-    tfidf_matrix = tf.fit_transform(df_item['category'])
-    print('Dimension of feature vector: {}'.format(tfidf_matrix.shape))
-    # measure similarity of two articles with cosine similarity
-    
-    cosine_sim = linear_kernel(tfidf_matrix, tfidf_matrix)
-    
-    print("Similarity Matrix:")
-    print(cosine_sim[:4, :4])
-    return cosine_sim, df
-
-def content_recommendation(df, k=20):
-    """
-        Generate top-k list according to cosine similarity
-    """
-    cosine_sim, df = content_processing(df)
-    df = df[['userId','time', 'tid', 'title', 'category']]
-    df.sort_values(by=['userId', 'time'], ascending=True, inplace=True)
-    print(df[:20]) # see how the dataset looks like
-    pred, actual = [], []
-    puid, ptid1, ptid2 = None, None, None
-    for row in df.itertuples():
-        uid, tid = row[1], row[3]
-        if uid != puid and puid != None:
-            idx = ptid1
-            sim_scores = list(enumerate(cosine_sim[idx]))
-            sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-            sim_scores = sim_scores[1:k+1]
-            sim_scores = [i for i,j in sim_scores]
-            pred.append(sim_scores)
-            actual.append(ptid2)
-            puid, ptid1, ptid2 = uid, tid, tid
-        else:
-            ptid1 = ptid2
-            ptid2 = tid
-            puid = uid
-    
-    evaluate(pred, actual, k)
-    
     
 def collaborative_filtering(df):
     # get rating matrix
