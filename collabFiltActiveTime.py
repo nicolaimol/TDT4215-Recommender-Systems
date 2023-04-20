@@ -63,13 +63,14 @@ def load_dataset(df):
     """
         Convert dataframe to user-item-interaction matrix, which is used for 
         Matrix Factorization based recommendation.
-        In rating matrix, clicked events are refered as 1 and others are refered as 0.
     """
     df = df[~df['documentId'].isnull()]
     df = df.drop_duplicates(subset=['userId', 'documentId']).reset_index(drop=True)
     df = df.sort_values(by=['userId', 'time'])
     n_users = df['userId'].nunique()
     n_items = df['documentId'].nunique()
+    # Fill all NaN with 0 
+    df = df.fillna(0)
 
     ratings = np.zeros((n_users, n_items))
     new_user = df['userId'].values[1:] != df['userId'].values[:-1]
@@ -78,11 +79,21 @@ def load_dataset(df):
     item_ids = df['documentId'].unique().tolist()
     new_df = pd.DataFrame({'documentId':item_ids, 'tid':range(1,len(item_ids)+1)})
     df = pd.merge(df, new_df, on='documentId', how='outer')
-    df_ext = df[['uid', 'tid']]
     
-    for row in df_ext.itertuples():
-        ratings[row[1]-1, row[2]-1] = 1.0
+    # Adds a collumn with the normalized active time for each user.
+    df['activeTime_norm'] = df.groupby('userId')['activeTime'].apply(lambda x: (x - x.mean()) / x.std()) # normalize activeTime for each user
+    
+    
+    # add normalized activeTime as rating 
+    for row in df[["uid", "tid", "activeTime_norm"]].itertuples():
+        ratings[row[1]-1, row[2]-1] = row[3] # use normalized activeTime as rating
+        
+    # making sure all NaN values are changed to 0. 
+    ratings = np.nan_to_num(ratings)
+    #debugging 
+    assert not any(np.isnan(ratings[r, c]) for c in range(ratings.shape[1]) for r in range(ratings.shape[0]))
     return ratings
+    
     
 def train_test_split(ratings, fraction=0.2):
     """Leave out a fraction of dataset for test use"""
